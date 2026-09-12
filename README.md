@@ -81,9 +81,30 @@ Settings namespace `web-search-crw` (also editable live under
 
 ## Development
 
-Edit `lib/index.js`, then re-run `npm run install:dsh`; the profile picks the
-new copy up on the next patch reload (touch `cordis.patch.yml` to force one),
-or restart `dsh web`.
+Two install modes:
+
+```sh
+npm run install:dsh            # copy — deploy-safe (default)
+npm run install:dsh -- --link  # symlink — local dev, live-edit
+```
+
+**Copy mode** puts the package physically under
+`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`, so its bare
+`@deepseek-ai/*` imports resolve through Node's parent-walk to the harness's
+hoisted closure. Re-run after editing `lib/index.js`; the web profile
+hot-reloads `cordis.patch.yml` (`patchReload: live`) — touch that file to
+force a reload — or restart `dsh web`.
+
+**`--link` mode** replaces the copy with a symlink into this repo (edit →
+reload, no reinstall). Because Node resolves through a symlink's realpath, a
+naive symlink would resolve the plugin's bare host imports from *this repo* —
+so the script additionally links `@deepseek-ai/dsh-web` and
+`@deepseek-ai/schemastery` into `node_modules/` here, pointing at the same
+realpaths the running harness loaded (Node dedupes by realpath, preserving
+class/service identity — never `npm install` your own copies of host
+packages; a shadowing second copy breaks Cordis service identity). Switch
+back any time with plain copy mode. If this repo moves or dsh is reinstalled,
+re-run the script to repair the links.
 
 ## License
 
