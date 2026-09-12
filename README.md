@@ -1,10 +1,13 @@
 # dsh-web-search-crw
 
-A self-contained [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) plugin that
-points the model-facing `web_search` tool at a local
+Self-hosted web search for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh):
+a `WebSearchProvider` plugin for the harness web seam (`ctx.web`) that points
+the model-facing `web_search` tool at **your own**
 [CRW](https://github.com/adambenhassen/crw-camofox)-compatible
-([Firecrawl](https://github.com/firecrawl/firecrawl)-compatible) server
-instead of a hosted search API — see [Requirements](#requirements).
+([Firecrawl](https://github.com/firecrawl/firecrawl)-compatible) server instead
+of a hosted search API. Single package — no companion plugins, no harness fork,
+no build step. It is a client: a running backend is required, see
+[Requirements](#requirements).
 
 It registers one `WebSearchProvider` (id `crw`) into the harness web seam
 (`ctx.web`) via the official provider convention — `inject: ["web"]` +
