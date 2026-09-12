@@ -1,0 +1,90 @@
+# dsh-web-search-crw
+
+A self-contained [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) plugin that
+points the model-facing `web_search` tool at a local CRW-compatible
+(Firecrawl-compatible) server instead of a hosted search API.
+
+It registers one `WebSearchProvider` (id `crw`) into the harness web seam
+(`ctx.web`) via the official provider convention — `inject: ["web"]` +
+`ctx.settings.installSection` + `ctx.web.registerSearchProvider` — mirroring
+the structure of the stock `@deepseek-ai/dsh-web-search-deepseek` plugin.
+No stock harness code is modified; selection happens purely through the seam's
+documented `searchProvider` config.
+
+## What it calls
+
+```
+POST {baseURL}/v1/search   {"query": "...", "limit": N}
+```
+
+and normalizes the Firecrawl-shaped response — `{success, data: {results, answer?}}`,
+where `results` is a flat array or a grouped `{web, news, images}` object — into
+the seam's `sources[]` (`snippet || description`, `publishedDate → publishedAt`,
+`data.answer → content`). Transport failures map to `WEB_PROVIDER_ERROR` (with
+endpoint recovery hints), caller cancellation to `WEB_ABORTED`.
+
+## Requirements
+
+- A CRW server reachable from the dsh host process (default `http://localhost:3000`)
+- dsh web profile, Node ≥ 22.19 (same floor as dsh itself)
+- No API key required while the CRW server runs without configured keys; set
+  `apiKey` (or `CRW_SEARCH_API_KEY`) to a server key once the CRW server has
+  API keys configured (the plugin then sends `Authorization: Bearer <key>`)
+
+## Install
+
+```sh
+# from this repo
+npm run install:dsh      # = bash scripts/install-to-dsh.sh
+```
+
+The script copies the package into `$DSH_HOME/profiles/node_modules/dsh-web-search-crw`
+— the harness's shared module-resolution anchor (see `@deepseek-ai/dsh-app-boot`
+profile docs). A **copy** is required, not a symlink: Node resolves through a
+symlink's realpath, so a linked plugin would resolve its `@deepseek-ai/*` bare
+imports by walking up from this repo instead of the harness's hoisted closure.
+
+Then register the provider in your profile patch (`$DSH_HOME/profiles/web/cordis.patch.yml`):
+
+```yaml
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: crw
+    fetchProvider: http
+
+- insert:
+    - id: web-search-crw
+      name: dsh-web-search-crw
+      config:
+        baseURL: http://localhost:3000
+        limit: 5
+        timeoutMs: 55000
+```
+
+A `web` row patch replaces the whole config, so `fetchProvider` must be restated.
+The `web` profile hot-reloads this file (`patchReload: live`) — no restart needed.
+
+To switch back to the stock provider, set `searchProvider: deepseek-official`.
+
+## Configuration
+
+Settings namespace `web-search-crw` (also editable live under
+**Settings → Plugins → Plugin configuration → Web search (CRW)**):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `baseURL` | `http://localhost:3000` | CRW base; `/v1/search` is appended. Env fallback: `CRW_SEARCH_BASE_URL` |
+| `apiKey` | — | Optional bearer key. Env fallback: `CRW_SEARCH_API_KEY` |
+| `limit` | `5` | Result-count fallback when the tool passes no `maxResults` |
+| `timeoutMs` | `30000` | Per-search deadline; keep below the tool layer's `searchTimeoutMs` |
+
+## Development
+
+Edit `lib/index.js`, then re-run `npm run install:dsh`; the profile picks the
+new copy up on the next patch reload (touch `cordis.patch.yml` to force one),
+or restart `dsh web`.
+
+## License
+
+MIT
