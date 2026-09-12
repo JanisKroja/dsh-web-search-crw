@@ -1,8 +1,10 @@
 # dsh-web-search-crw
 
 A self-contained [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) plugin that
-points the model-facing `web_search` tool at a local CRW-compatible
-(Firecrawl-compatible) server instead of a hosted search API.
+points the model-facing `web_search` tool at a local
+[CRW](https://github.com/adambenhassen/crw-camofox)-compatible
+([Firecrawl](https://github.com/firecrawl/firecrawl)-compatible) server
+instead of a hosted search API — see [Requirements](#requirements).
 
 It registers one `WebSearchProvider` (id `crw`) into the harness web seam
 (`ctx.web`) via the official provider convention — `inject: ["web"]` +
@@ -25,11 +27,34 @@ endpoint recovery hints), caller cancellation to `WEB_ABORTED`.
 
 ## Requirements
 
-- A CRW server reachable from the dsh host process (default `http://localhost:3000`)
+**You need a running CRW/Firecrawl-compatible search server — this plugin ships
+no search backend of its own; it is a client.** Concretely, it requires a
+server that implements `POST /v1/search` with the Firecrawl v1 search contract
+(see [What it calls](#what-it-calls) for the exact request/response shapes
+accepted).
+
+Recommended backends:
+
+- **[CRW](https://github.com/adambenhassen/crw-camofox)** — the reference
+  backend this plugin was built for. A Rust, Firecrawl-compatible
+  search/scrape/crawl server whose `/v1/search` drives Google through
+  **[camofox-browser](https://github.com/redf0x1/camofox-browser)**, a REST
+  wrapper around the **[Camoufox](https://github.com/daijro/camoufox)**
+  anti-detect Firefox fork. The quick start is the repo's compose stack:
+  `docker compose up -d` (publishes the server on `localhost:3000`).
+- **Any [Firecrawl](https://github.com/firecrawl/firecrawl)-compatible**
+  implementation of the search endpoint — self-hosted or hosted. Consult the
+  [Firecrawl search API reference](https://docs.firecrawl.dev/api-reference/endpoint/search);
+  note that hosted Firecrawl also requires a real API key (set `apiKey` or
+  `CRW_SEARCH_API_KEY` below).
+
+Other requirements:
+
 - dsh web profile, Node ≥ 22.19 (same floor as dsh itself)
-- No API key required while the CRW server runs without configured keys; set
-  `apiKey` (or `CRW_SEARCH_API_KEY`) to a server key once the CRW server has
-  API keys configured (the plugin then sends `Authorization: Bearer <key>`)
+- No API key needed while the server runs without configured keys (the default
+  for local compose stacks). Once the server has API keys configured, set
+  `apiKey` (or `CRW_SEARCH_API_KEY`) to one of them — the plugin then sends
+  `Authorization: Bearer <key>`.
 
 ## Install
 
