@@ -87,7 +87,7 @@ Then register the provider in your profile patch (`$DSH_HOME/profiles/web/cordis
       config:
         baseURL: http://localhost:3000
         limit: 5
-        timeoutMs: 55000
+        timeoutMs: 60000
 ```
 
 A `web` row patch replaces the whole config, so `fetchProvider` must be restated.
@@ -105,9 +105,33 @@ Settings namespace `web-search-crw` (also editable live under
 | `baseURL` | `http://localhost:3000` | CRW base; `/v1/search` is appended. Env fallback: `CRW_SEARCH_BASE_URL` |
 | `apiKey` | — | Optional bearer key. Env fallback: `CRW_SEARCH_API_KEY` |
 | `limit` | `5` | Result-count fallback when the tool passes no `maxResults` |
-| `timeoutMs` | `30000` | Per-search deadline; keep below the tool layer's `searchTimeoutMs` |
+| `timeoutMs` | `60000` | Per-search deadline. One Camofox Google SERP leg measures ~45 s cold, so the old `30000` default aborted real searches |
+| `resolveRedirects` | `true` | Unwrap Google's click-redirect wrappers (`/url?q=`, `/goto?url=`, `/aclk`, `/imgurl`) into the real destination |
+| `resolveTimeoutMs` | `4000` | Per-wrapper deadline; a row that cannot be resolved keeps its original URL rather than being dropped |
+
+`timeoutMs` is nested inside the host tool layer's own budget,
+`tool-web.searchTimeoutMs` (default `30000`), which bounds the same
+`web_search` call first. Raise both together — a provider deadline of 60 s behind
+a 30 s host deadline still aborts at 30 s.
+
+Why `resolveRedirects` exists: Google's SERP anchors point at
+`google.com/goto?url=<opaque token>`, not at the destination, and the token
+base64-decodes to opaque protobuf bytes — the target URL only exists in the
+redirect's `Location`. The harness fetch client refuses cross-origin redirects by
+design (an SSRF guard), so an unwrapped link is the difference between a citable
+source and an extra resolve round trip per result. Turn it off only if CRW itself
+starts returning clean URLs.
 
 ## Development
+
+Verify the click-redirect unwrap (stubbed fetch, no network — asserts the
+`/url?q=` and `/goto?url=` paths, the `Location` and meta-refresh recovery
+routes, second-hop rejection, dupe collapse, and the timeout fallback):
+
+```sh
+node scripts/verify-unwrap.mjs          # offline assertions
+node scripts/verify-unwrap.mjs --live   # against the real CRW server; exits 1 on any leaked wrapper URL
+```
 
 Two install modes:
 
