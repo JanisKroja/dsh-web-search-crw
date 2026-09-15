@@ -91,7 +91,9 @@ Then register the provider in your profile patch (`$DSH_HOME/profiles/web/cordis
 ```
 
 A `web` row patch replaces the whole config, so `fetchProvider` must be restated.
-The `web` profile hot-reloads this file (`patchReload: live`) — no restart needed.
+The `web` profile hot-reloads this file (`patchReload: live`), so **config** changes
+need no restart — but a change to this plugin's `lib/index.js` does; see
+[Reload vs restart](#reload-vs-restart).
 
 To switch back to the stock provider, set `searchProvider: deepseek-official`.
 
@@ -141,22 +143,54 @@ npm run install:dsh -- --link  # symlink — local dev, live-edit
 ```
 
 **Copy mode** puts the package physically under
-`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`, so its bare
-`@deepseek-ai/*` imports resolve through Node's parent-walk to the harness's
-hoisted closure. Re-run after editing `lib/index.js`; the web profile
-hot-reloads `cordis.patch.yml` (`patchReload: live`) — touch that file to
-force a reload — or restart `dsh web`.
+`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`, the harness's shared
+module-resolution anchor, so its bare `@deepseek-ai/*` imports resolve through
+Node's parent-walk to the harness's hoisted closure.
 
-**`--link` mode** replaces the copy with a symlink into this repo (edit →
-reload, no reinstall). Because Node resolves through a symlink's realpath, a
-naive symlink would resolve the plugin's bare host imports from *this repo* —
-so the script additionally links `@deepseek-ai/dsh-web` and
-`@deepseek-ai/schemastery` into `node_modules/` here, pointing at the same
-realpaths the running harness loaded (Node dedupes by realpath, preserving
-class/service identity — never `npm install` your own copies of host
-packages; a shadowing second copy breaks Cordis service identity). Switch
+**`--link` mode** replaces that anchor entry with a symlink into this repo.
+Because Node resolves through a symlink's realpath, a naive symlink would resolve
+the plugin's bare host imports from *this repo* — so the script additionally links
+`@deepseek-ai/dsh-web` and `@deepseek-ai/schemastery` into `node_modules/` here,
+pointing at the same realpaths the running harness loaded (Node dedupes by
+realpath, preserving class/service identity — never `npm install` your own copies
+of host packages; a shadowing second copy breaks Cordis service identity). Switch
 back any time with plain copy mode. If this repo moves or dsh is reinstalled,
 re-run the script to repair the links.
+
+### The copy that actually loads (read this if edits seem to vanish)
+
+If the profile's `package.json` lists this plugin as a dependency — normally
+`"dsh-web-search-crw": "file:/path/to/this/repo"`, which is how the repo gets into
+a profile in the first place — the package manager also materializes it at
+`$DSH_HOME/profiles/<profile>/node_modules/dsh-web-search-crw/` as a **real
+directory of hardlinked files**, not a symlink into the repo.
+
+Node resolves that profile-local copy **before** the anchor, so it shadows
+`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`. Editing this repo — or
+installing into the anchor alone — then changes nothing the harness can see, and
+restarting reloads the same stale copy. `scripts/install-to-dsh.sh` syncs `lib/`
+into every profile-local copy it finds and tells you when the anchor is the one
+being resolved; `pnpm install --force` inside the profile dir is the package-manager
+native equivalent (it also picks up `package.json`, and needs the registry
+reachable for the profile's other dependencies).
+
+You can confirm which file is loaded:
+
+```sh
+grep -c classifyRedirectWrapper ~/.dsh/profiles/web/node_modules/dsh-web-search-crw/lib/index.js
+```
+
+### Reload vs restart
+
+`patchReload: live` on the web profile re-applies `cordis.patch.yml` **config** in
+the running process. Nothing in cordis busts a plugin's module cache, so
+`lib/index.js` is imported once at startup:
+
+| Changed | Takes effect |
+|---|---|
+| `cordis.patch.yml` rows, or this plugin's config (`baseURL`, `limit`, `timeoutMs`, `resolveRedirects`, `resolveTimeoutMs`) | live, no restart |
+| `lib/index.js` (any code change) | after restarting `dsh web` |
+
 
 ## License
 
