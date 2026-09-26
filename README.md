@@ -110,6 +110,20 @@ Settings namespace `web-search-crw` (also editable live under
 | `timeoutMs` | `60000` | Per-search deadline. One Camofox Google SERP leg measures ~45 s cold, so the old `30000` default aborted real searches |
 | `resolveRedirects` | `true` | Unwrap Google's click-redirect wrappers (`/url?q=`, `/goto?url=`, `/aclk`, `/imgurl`) into the real destination |
 | `resolveTimeoutMs` | `4000` | Per-wrapper deadline; a row that cannot be resolved keeps its original URL rather than being dropped |
+| `engines` | `[]` | Which Camofox engines to query: any of `google`, `bing`, `duckduckgo`, `wikipedia`, `youtube`, `reddit`, `amazon`, `github` (max 4, deduped). Results merge and dedupe by URL — a URL found by several engines ranks higher. Browser engines run sequentially on the warm tab, so N engines ≈ N× latency: raise `timeoutMs` (and `tool-web.searchTimeoutMs`) with it. Empty = server default (google only) |
+| `categories` | `[]` | CRW category filters: curated `github`, `research`, `pdf`, or any native SearXNG category passed through (max 5) |
+| `sources` | `[]` | Result groups to request: `web`, `news`, `images`. CRW returns them grouped; the plugin concatenates web → news → images. Empty = server default (flat web) |
+| `junkTitlePatterns` | `[]` | Extra case-insensitive regexes treated as Google SERP UI chrome and replaced with a URL-derived title; added to the built-in en/lv list (AI-mode / People-also-ask / Related-searches headings). Invalid patterns are skipped |
+
+### Title sanitization
+
+The Camofox backend scrapes the Google SERP in the **exit-IP locale** (the
+`lang` request param is honored by the SearXNG backend only), and its
+extractor occasionally grabs a localized section heading instead of the link
+text — e.g. `MI režīma atbilde:` ("AI Mode answer:") on an organic row. The
+provider matches titles against the junk-title patterns and substitutes a
+URL-derived title (`org/repo` for git hosts, humanized final path segment,
+host fallback), so the model never cites a SERP-ui string as a page title.
 
 `timeoutMs` is nested inside the host tool layer's own budget,
 `tool-web.searchTimeoutMs` (default `30000`), which bounds the same
@@ -126,12 +140,11 @@ starts returning clean URLs.
 
 ## Development
 
-Verify the click-redirect unwrap (stubbed fetch, no network — asserts the
-`/url?q=` and `/goto?url=` paths, the `Location` and meta-refresh recovery
-routes, second-hop rejection, dupe collapse, and the timeout fallback):
+Two verify scripts:
 
 ```sh
-node scripts/verify-unwrap.mjs          # offline assertions
+node scripts/verify-normalize.mjs   # offline unit assertions on lib/normalize.js (titles, sanitizing, row shapes)
+node scripts/verify-unwrap.mjs          # offline assertions on the redirect unwrap (needs --link for host imports)
 node scripts/verify-unwrap.mjs --live   # against the real CRW server; exits 1 on any leaked wrapper URL
 ```
 

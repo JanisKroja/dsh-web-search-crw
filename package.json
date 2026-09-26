@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search-crw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CRW (Firecrawl-compatible) search provider for the DeepSeek Harness web capability seam (ctx.web): registers a WebSearchProvider that calls CRW POST /v1/search",
   "type": "module",
   "main": "lib/index.js",
@@ -18,7 +18,7 @@
     "self-hosted"
   ],
   "files": [
-    "lib/index.js"
+    "lib"
   ],
   "scripts": {
     "install:dsh": "bash scripts/install-to-dsh.sh"
