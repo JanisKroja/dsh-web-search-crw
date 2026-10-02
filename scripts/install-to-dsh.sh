@@ -1,67 +1,60 @@
 #!/usr/bin/env bash
-# Install/update dsh-web-search-crw into a DSH profile.
+# Install/update dsh-web-search-crw into a DSH 0.2 profile.
 #
-# TWO PLACES MATTER, and only one of them is what the harness loads.
+# 0.2 PROFILE LAYOUT: a profile at $DSH_HOME/profiles/<profile>/ is its own pnpm
+# project (package.json + pnpm-workspace.yaml + node_modules). The supported
+# install route is the dsh CLI, which runs pnpm inside the profile:
 #
-#   1. The shared module-resolution ANCHOR:
-#        $DSH_HOME/profiles/node_modules/dsh-web-search-crw
-#      (see @deepseek-ai/dsh-app-boot profile docs: "$DSH_HOME/profiles/node_modules
-#      supplies the installation dependency closure"). This is where the original
-#      version of this script wrote.
+#   dsh plugin --profile <profile> add file:<this repo>
 #
-#   2. The PROFILE-LOCAL copy:
-#        $DSH_HOME/profiles/<profile>/node_modules/dsh-web-search-crw
-#      When the profile's package.json lists this plugin as a dependency (typically
-#      "dsh-web-search-crw": "file:/path/to/this/repo"), the package manager
-#      materializes it there — as a real directory of hardlinked files, not a
-#      symlink into this repo.
+# That adds "dsh-web-search-crw": "file:<repo>" to the profile's package.json
+# and materializes the package under
+#   $DSH_HOME/profiles/<profile>/node_modules/dsh-web-search-crw/
+# as a real directory (a package-manager copy) — that copy, not this repo, is
+# what the harness imports. Re-sync after edits by re-running this script (or
+# `pnpm install --force` inside the profile dir).
 #
-# Node resolves the profile-local copy FIRST, so it SHADOWS the anchor. Writing only
-# to the anchor — which is what copying and even --link mode used to do — left the
-# running harness importing a stale profile-local copy: `lib/index.js` edits appeared
-# to vanish, and restarting dsh re-loaded the same stale file. This script therefore
-# installs the anchor AND syncs `lib/` into every profile-local copy it finds.
+# HOST PACKAGE IDENTITY: @deepseek-ai/dsh-web and @deepseek-ai/cordis are
+# peerDependencies only. dsh-app-boot's resolution interception routes a
+# profile-installed plugin's bare imports of those to the SAME installation
+# copies the harness loaded — one class identity per host class (WebError, the
+# service tokens). Never `npm install` private copies of host packages in this
+# repo. @deepseek-ai/schemastery is a plain dependency: the profile's hoisted
+# copy is the supported pattern for schema data (the same way the shipped
+# dsh-chrome-mcp plugin takes it).
 #
-# RESTART REQUIRED for JS edits: `patchReload: live` (the web profile's setting)
-# re-applies cordis.patch.yml CONFIG in the running process; nothing in cordis busts
-# the plugin's module cache, so `lib/index.js` is imported once at startup. Config-only
-# changes (baseURL, limit, timeoutMs, resolveRedirects) land live; code changes need
-# `dsh web` restarted. The script says so when it changes a file.
+# RESTART SEMANTICS (0.2):
+#   - the FIRST install (a new entry row + new code): restart `dsh <profile>`;
+#     cordis imports plugin modules once at startup, and the entry must exist.
+#   - afterwards, config edits apply LIVE: the GUI's Configure page (or any
+#     change to a volatile field in cordis.patch.yml) is committed into the
+#     running fiber's volatile config refs — no restart, no re-registration.
+#   - lib/*.js changes: re-run this script, then restart `dsh <profile>`.
 #
-# The pnpm-native alternative to syncing by hand is `pnpm install --force` inside the
-# profile dir, which re-materializes a `file:` dependency from this repo. That also
-# works, and pulls package.json changes too; it is heavier and needs the registry
-# reachable for the profile's other dependencies.
+# The script also repairs this repo's node_modules/@deepseek-ai/* symlinks so
+# the offline verify scripts (`node scripts/verify-normalize.mjs`,
+# `node scripts/verify-unwrap.mjs`) can import the host packages' realpaths
+# from inside the repo — the runtime mirror of the interception above.
 #
 # Usage:
-#   bash scripts/install-to-dsh.sh                  # copy mode, all profiles
-#   bash scripts/install-to-dsh.sh --link           # symlink the anchor (local dev)
-#   bash scripts/install-to-dsh.sh --profile web    # restrict the sync to one profile
-#   npm run install:dsh -- --link                   # same, via npm
+#   bash scripts/install-to-dsh.sh                  # profile: web
+#   bash scripts/install-to-dsh.sh --profile NAME
+#   npm run install:dsh -- --profile NAME
 #
 # Env: DSH_HOME overrides the harness home (default ~/.dsh).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DSH_HOME_RESOLVED="${DSH_HOME:-$HOME/.dsh}"
 PKG="dsh-web-search-crw"
-HOST_MODULES="$DSH_HOME_RESOLVED/profiles/node_modules"
-DST="$HOST_MODULES/$PKG"
-HOST_PKGS=(dsh-web schemastery)
-# Sanity marker a correctly-installed lib/index.js must contain.
 MARKER="CRW_DEFAULT_BASE_URL"
+profile="web"
 
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
 }
 
-mode="copy"
-profile=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --link)
-      mode="link"
-      shift
-      ;;
     --profile)
       if [[ -z "${2:-}" ]]; then
         echo "error: --profile needs a profile name (e.g. --profile web)." >&2
@@ -75,101 +68,54 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "usage: $0 [--link] [--profile NAME]" >&2
+      echo "usage: $0 [--profile NAME]" >&2
       exit 2
       ;;
   esac
 done
 
-if [[ "$mode" == "link" ]]; then
-  for pkg in "${HOST_PKGS[@]}"; do
-    if [[ ! -e "$HOST_MODULES/@deepseek-ai/$pkg" ]]; then
-      echo "error: host package @deepseek-ai/$pkg not found under $HOST_MODULES/@deepseek-ai/." >&2
-      echo "       Start 'dsh web' once (it refreshes the profile module anchor), or set DSH_HOME." >&2
-      exit 1
-    fi
-  done
-  # rm on a symlink removes the link itself (contents of the target are safe).
-  rm -rf "$DST"
-  ln -s "$REPO" "$DST"
-  # A linked plugin would otherwise resolve its bare @deepseek-ai/* imports by walking
-  # up from this repo (where they do not exist). Linking the host packages this plugin
-  # imports to the SAME realpaths the running harness loaded keeps one Node cache entry
-  # per module — and so one class identity for WebError and the service tokens. A private
-  # second copy of @deepseek-ai/* would silently break those. Never `npm install` your own
-  # copies of host packages.
-  mkdir -p "$REPO/node_modules/@deepseek-ai"
-  for pkg in "${HOST_PKGS[@]}"; do
-    ln -sfn "$HOST_MODULES/@deepseek-ai/$pkg" "$REPO/node_modules/@deepseek-ai/$pkg"
-  done
-  echo "linked (dev): $REPO -> $DST"
-  echo "host imports wired to the harness's own instances: ${HOST_PKGS[*]}"
-  echo "note: if the repo moves or dsh is reinstalled, re-run this script (or plain copy mode)."
-else
-  rm -rf "$DST"          # removes the directory — or a stale --link symlink, without following it
-  mkdir -p "$DST"
-  cp "$REPO/package.json" "$DST/package.json"
-  cp -R "$REPO/lib" "$DST/lib"
-  echo "installed (copy): $REPO -> $DST"
+PROFILE_DIR="$DSH_HOME_RESOLVED/profiles/$profile"
+[[ -d "$PROFILE_DIR" ]] || { echo "error: no profile at $PROFILE_DIR — boot it once first (dsh $profile)." >&2; exit 1; }
+
+echo "==> dsh plugin --profile $profile add file:$REPO"
+(cd "$PROFILE_DIR" && dsh plugin --profile "$profile" add "file:$REPO")
+
+# file: copies are content-tracked; force re-materialization so lib edits land.
+DST="$PROFILE_DIR/node_modules/$PKG"
+if [[ -e "$DST/lib/index.js" ]] && ! diff -rq "$REPO/lib" "$DST/lib" >/dev/null 2>&1; then
+  echo "==> profile copy differs; refreshing with pnpm install --force"
+  (cd "$PROFILE_DIR" && pnpm install --force)
 fi
 
-# --- Sync the profile-local copies that actually shadow the anchor. -----------------
-changed=0
-found=0
-for dir in "$DSH_HOME_RESOLVED"/profiles/*/node_modules/"$PKG"; do
-  if [[ -n "$profile" ]]; then
-    # dir = profiles/<name>/node_modules/<pkg>
-    owner="$(basename "$(dirname "$(dirname "$dir")")")"
-    [[ "$owner" == "$profile" ]] || continue
-    if [[ ! -e "$dir" && ! -L "$dir" ]]; then
-      echo "error: no profile-local copy at $dir (check --profile)." >&2
-      exit 1
-    fi
-  fi
-  [[ -e "$dir" || -L "$dir" ]] || continue
-  found=$((found + 1))
-  if [[ -L "$dir" ]]; then
-    resolved="$(cd "$dir" 2>/dev/null && pwd || true)"
-    if [[ "$resolved" == "$REPO" ]]; then
-      echo "profile copy already resolves to this repo: $dir"
-    else
-      echo "warning: $dir is a symlink to '${resolved:-broken}' (not this repo) — left untouched." >&2
-      echo "         If that is stale, remove it or run 'pnpm install --force' in the profile dir." >&2
-    fi
-    continue
-  fi
-  # Compare only the files THIS repo ships. The copy can hold extra operator files —
-  # a saved lib/index.js.bak, for instance — which a directory-wide diff would report as
-  # drift, and a `rm -rf lib` would then destroy. So: no wholesale delete here either.
-  current=1
-  while IFS= read -r -d '' src; do
-    rel="${src#"$REPO"/}"
-    diff -q "$src" "$dir/$rel" >/dev/null 2>&1 || current=0
-  done < <(find "$REPO/lib" -type f -print0)
-  if [[ "$current" -eq 1 ]]; then
-    echo "profile copy already current: $dir"
-    continue
-  fi
-  mkdir -p "$dir/lib"
-  cp -R "$REPO/lib/." "$dir/lib/"
-  if ! grep -q "$MARKER" "$dir/lib/index.js"; then
-    echo "error: synced file at $dir/lib/index.js does not contain $MARKER — restore from git." >&2
-    exit 1
-  fi
-  echo "synced profile copy: $dir"
-  changed=1
-done
+[[ -e "$DST/lib/index.js" ]] || { echo "error: $DST/lib/index.js missing after install." >&2; exit 1; }
+grep -q "$MARKER" "$DST/lib/index.js" || { echo "error: synced $DST/lib/index.js does not contain $MARKER — restore from git." >&2; exit 1; }
+[[ -e "$DST/lib/client.js" ]] || { echo "error: $DST/lib/client.js missing — the GUI settings page would not load." >&2; exit 1; }
+[[ "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$DST/package.json")" == "$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$REPO/package.json")" ]] \
+  || { echo "warning: $DST/package.json version differs from the repo's; run: (cd $PROFILE_DIR && pnpm install --force)" >&2; }
+echo "installed: $DST"
 
-if [[ "$found" -eq 0 ]]; then
-  echo "note: no profile-local copy found under $DSH_HOME_RESOLVED/profiles/*/node_modules/$PKG;"
-  echo "      the anchor at $DST is the one being resolved."
-elif [[ "$changed" -eq 1 ]]; then
-  echo
-  echo "restart 'dsh web' to load the new lib/index.js."
-  echo "  patchReload: live re-applies cordis.patch.yml config only — cordis does not bust"
-  echo "  the plugin's module cache, so a running process keeps the copy it imported at startup."
-  echo "  (Touching the patch file reloads CONFIG such as baseURL/limit/timeoutMs, not code.)"
+# --- Dev convenience: bare host imports for the offline verify scripts. --------
+# Mirror what the runtime interception gives the installed copy: dsh-web from
+# the running dsh installation, schemastery from the profile's hoisted closure.
+GLOBAL_ROOT="$(npm root -g 2>/dev/null || true)"
+DSH_WEB_SRC="$GLOBAL_ROOT/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-web"
+SCHEMASTRY_SRC="$PROFILE_DIR/node_modules/@deepseek-ai/schemastery"
+mkdir -p "$REPO/node_modules/@deepseek-ai"
+if [[ -e "$DSH_WEB_SRC/package.json" ]]; then
+  ln -sfn "$DSH_WEB_SRC" "$REPO/node_modules/@deepseek-ai/dsh-web"
 else
-  echo
-  echo "nothing to sync: every resolvable copy already matches this repo's lib/."
+  echo "warning: @deepseek-ai/dsh-web not found under $GLOBAL_ROOT — verify scripts may fail to import." >&2
 fi
+if [[ -e "$SCHEMASTRY_SRC/package.json" ]]; then
+  ln -sfn "$SCHEMASTRY_SRC" "$REPO/node_modules/@deepseek-ai/schemastery"
+else
+  echo "warning: @deepseek-ai/schemastery not found in $PROFILE_DIR — verify scripts may fail to import." >&2
+fi
+echo "dev imports wired: @deepseek-ai/dsh-web, @deepseek-ai/schemastery"
+
+echo
+echo "done."
+echo "  First install of this entry: restart 'dsh $profile' (new entry + new code)."
+echo "  After that: GUI edits (Plugins > $PKG > web-search-crw row > Configure) and any"
+echo "  volatile-field change in $PROFILE_DIR/cordis.patch.yml apply LIVE — no restart."
+echo "  lib/*.js changes: re-run this script, then restart 'dsh $profile'."

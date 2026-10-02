@@ -5,16 +5,21 @@ a `WebSearchProvider` plugin for the harness web seam (`ctx.web`) that points
 the model-facing `web_search` tool at **your own**
 [CRW](https://github.com/adambenhassen/crw-camofox)-compatible
 ([Firecrawl](https://github.com/firecrawl/firecrawl)-compatible) server instead
-of a hosted search API. Single package — no companion plugins, no harness fork,
-no build step. It is a client: a running backend is required, see
+of a hosted search API. Single package — no companion plugin package, no
+harness fork, no build step. It is a client: a running backend is required, see
 [Requirements](#requirements).
 
 It registers one `WebSearchProvider` (id `crw`) into the harness web seam
 (`ctx.web`) via the official provider convention — `inject: ["web"]` +
-`ctx.settings.installSection` + `ctx.web.registerSearchProvider` — mirroring
-the structure of the stock `@deepseek-ai/dsh-web-search-deepseek` plugin.
-No stock harness code is modified; selection happens purely through the seam's
-documented `searchProvider` config.
+`ctx.web.registerSearchProvider` — mirroring the structure of the stock
+`@deepseek-ai/dsh-web-search-deepseek` plugin. No stock harness code is
+modified; selection happens purely through the seam's documented
+`searchProvider` config.
+
+**Requires dsh ≥ 0.2** (`dsh -V`). On 0.2 the plugin also ships a browser half
+(`lib/client.js`, declared via `dsh.client` in `package.json`) that mounts the
+**auto-generated settings page** described under
+[Configuration](#configuration) — still with no build step.
 
 ## What it calls
 
@@ -44,7 +49,9 @@ Recommended backends:
   **[camofox-browser](https://github.com/redf0x1/camofox-browser)**, a REST
   wrapper around the **[Camoufox](https://github.com/daijro/camoufox)**
   anti-detect Firefox fork. The quick start is the repo's compose stack:
-  `docker compose up -d` (publishes the server on `localhost:3000`).
+  `docker compose up -d` (publishes the server on port 3000 — on the same
+  machine that is `http://localhost:3000`, on a LAN box
+  `http://<server-ip>:3000`).
 - **Any [Firecrawl](https://github.com/firecrawl/firecrawl)-compatible**
   implementation of the search endpoint — self-hosted or hosted. Consult the
   [Firecrawl search API reference](https://docs.firecrawl.dev/api-reference/endpoint/search);
@@ -53,7 +60,7 @@ Recommended backends:
 
 Other requirements:
 
-- dsh web profile, Node ≥ 22.19 (same floor as dsh itself)
+- dsh ≥ 0.2 web profile, Node ≥ 22.19 (same floor as dsh itself)
 - No API key needed while the server runs without configured keys (the default
   for local compose stacks). Once the server has API keys configured, set
   `apiKey` (or `CRW_SEARCH_API_KEY`) to one of them — the plugin then sends
@@ -63,16 +70,23 @@ Other requirements:
 
 ```sh
 # from this repo
-npm run install:dsh      # = bash scripts/install-to-dsh.sh
+npm run install:dsh                  # = bash scripts/install-to-dsh.sh (profile: web)
+npm run install:dsh -- --profile NAME
 ```
 
-The script copies the package into `$DSH_HOME/profiles/node_modules/dsh-web-search-crw`
-— the harness's shared module-resolution anchor (see `@deepseek-ai/dsh-app-boot`
-profile docs). A **copy** is required, not a symlink: Node resolves through a
-symlink's realpath, so a linked plugin would resolve its `@deepseek-ai/*` bare
-imports by walking up from this repo instead of the harness's hoisted closure.
+The script wraps the supported 0.2 route — `dsh plugin --profile <name> add
+file:<repo>` — which runs pnpm inside the profile project
+(`$DSH_HOME/profiles/<profile>/`) and materializes the package under
+`$DSH_HOME/profiles/<profile>/node_modules/dsh-web-search-crw/`. That
+package-manager copy, not this repo, is what the harness imports; re-run the
+script (or `pnpm install --force` in the profile dir) to re-sync after edits.
+`@deepseek-ai/dsh-web` and `@deepseek-ai/cordis` stay peers: dsh-app-boot's
+resolution interception routes the installed plugin's imports of them to the
+harness's own copies, so there is never a second `WebError` class identity.
+Never `npm install` private copies of host packages in this repo.
 
-Then register the provider in your profile patch (`$DSH_HOME/profiles/web/cordis.patch.yml`):
+Then register the provider in your profile patch
+(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`):
 
 ```yaml
 - id: web
@@ -85,27 +99,38 @@ Then register the provider in your profile patch (`$DSH_HOME/profiles/web/cordis
     - id: web-search-crw
       name: dsh-web-search-crw
       config:
-        baseURL: http://localhost:3000
-        limit: 5
-        timeoutMs: 60000
+        baseURL: http://<your-crw-server>:3000
 ```
 
-A `web` row patch replaces the whole config, so `fetchProvider` must be restated.
-The `web` profile hot-reloads this file (`patchReload: live`), so **config** changes
-need no restart — but a change to this plugin's `lib/index.js` does; see
+A `web` row patch replaces the whole config, so `fetchProvider` must be
+restated. The row `id` below must stay `web-search-crw` — the settings
+namespace and the GUI page bind to it. First boot of a new entry needs a
+`dsh web` restart; everything after that is live, see
 [Reload vs restart](#reload-vs-restart).
 
 To switch back to the stock provider, set `searchProvider: deepseek-official`.
 
 ## Configuration
 
-Settings namespace `web-search-crw` (also editable live under
-**Settings → Plugins → Plugin configuration → Web search (CRW)**):
+Settings namespace `web-search-crw`. On dsh 0.2 the harness derives this
+entry's settings form directly from the plugin's exported `Config` schema —
+**every field the plugin declares is `.volatile()`, so the whole table below
+is editable live** under
+
+**Plugins page → dsh-web-search-crw → the `web-search-crw` row → Configure**
+
+— one control per field, generated from the live schema (types, order,
+descriptions; `apiKey` renders as a write-only secret field — its literal
+never crosses the wire). Saving writes through the profile patch and commits
+into the running process; no restart. This is the intended place to point
+`baseURL` at your remote CRW server's IP and port. The values also live in
+`cordis.patch.yml` under the `web-search-crw` row's `config:` and may be
+edited by hand.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `baseURL` | `http://localhost:3000` | CRW base; `/v1/search` is appended. Env fallback: `CRW_SEARCH_BASE_URL` |
-| `apiKey` | — | Optional bearer key. Env fallback: `CRW_SEARCH_API_KEY` |
+| `baseURL` | env `CRW_SEARCH_BASE_URL`, else `http://localhost:3000` | CRW server base — remote IP and port; `/v1/search` is appended |
+| `apiKey` | — | Optional bearer key. Stored outside the settings file (secret role). Env fallback: `CRW_SEARCH_API_KEY` |
 | `limit` | `5` | Result-count fallback when the tool passes no `maxResults` |
 | `timeoutMs` | `60000` | Per-search deadline. One Camofox Google SERP leg measures ~45 s cold, so the old `30000` default aborted real searches |
 | `resolveRedirects` | `true` | Unwrap Google's click-redirect wrappers (`/url?q=`, `/goto?url=`, `/aclk`, `/imgurl`) into the real destination |
@@ -138,72 +163,43 @@ design (an SSRF guard), so an unwrapped link is the difference between a citable
 source and an extra resolve round trip per result. Turn it off only if CRW itself
 starts returning clean URLs.
 
+## How the 0.2 settings plumbing works
+
+- **Host half** (`lib/index.js`): the harness's `@deepseek-ai/dsh-settings`
+  service reads the plugin's exported `Config` schema from the live Loader
+  entry — no `installSection` call exists anymore — and projects the
+  **`.volatile()` fields** into an editable form (`volatileForm`). A config
+  change touching only volatile fields is committed straight into the running
+  fiber's volatile refs; `apply()` reads every field through `.get()` per
+  search, so the next `web_search` uses the new endpoint with no restart.
+- **Browser half** (`lib/client.js`, `dsh.client` in `package.json`): the host
+  serves it through the client-module graph. It registers the Plugins page's
+  keyed `plugins.row.config` cell (`dsh-web-search-crw#web-search-crw`)
+  while the Host serves the `web-search-crw` namespace, and **generates the
+  form from the live schema** the Host publishes: a control per field
+  (text / number / checkbox / one-per-line textarea), secret fields write-only
+  with a configured badge, descriptions as hints, saves as revision-fenced
+  mutate ops. Adding a new volatile field to `Config` makes it appear in the
+  GUI with no client change.
+
 ## Development
 
-Two verify scripts:
+Two verify scripts (offline; the install script wires `node_modules/@deepseek-ai/*`
+symlinks to the harness's own realpaths so their host imports resolve):
 
 ```sh
 node scripts/verify-normalize.mjs   # offline unit assertions on lib/normalize.js (titles, sanitizing, row shapes)
-node scripts/verify-unwrap.mjs          # offline assertions on the redirect unwrap (needs --link for host imports)
+node scripts/verify-unwrap.mjs      # offline assertions on the redirect unwrap
 node scripts/verify-unwrap.mjs --live   # against the real CRW server; exits 1 on any leaked wrapper URL
 ```
 
-Two install modes:
-
-```sh
-npm run install:dsh            # copy — deploy-safe (default)
-npm run install:dsh -- --link  # symlink — local dev, live-edit
-```
-
-**Copy mode** puts the package physically under
-`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`, the harness's shared
-module-resolution anchor, so its bare `@deepseek-ai/*` imports resolve through
-Node's parent-walk to the harness's hoisted closure.
-
-**`--link` mode** replaces that anchor entry with a symlink into this repo.
-Because Node resolves through a symlink's realpath, a naive symlink would resolve
-the plugin's bare host imports from *this repo* — so the script additionally links
-`@deepseek-ai/dsh-web` and `@deepseek-ai/schemastery` into `node_modules/` here,
-pointing at the same realpaths the running harness loaded (Node dedupes by
-realpath, preserving class/service identity — never `npm install` your own copies
-of host packages; a shadowing second copy breaks Cordis service identity). Switch
-back any time with plain copy mode. If this repo moves or dsh is reinstalled,
-re-run the script to repair the links.
-
-### The copy that actually loads (read this if edits seem to vanish)
-
-If the profile's `package.json` lists this plugin as a dependency — normally
-`"dsh-web-search-crw": "file:/path/to/this/repo"`, which is how the repo gets into
-a profile in the first place — the package manager also materializes it at
-`$DSH_HOME/profiles/<profile>/node_modules/dsh-web-search-crw/` as a **real
-directory of hardlinked files**, not a symlink into the repo.
-
-Node resolves that profile-local copy **before** the anchor, so it shadows
-`$DSH_HOME/profiles/node_modules/dsh-web-search-crw`. Editing this repo — or
-installing into the anchor alone — then changes nothing the harness can see, and
-restarting reloads the same stale copy. `scripts/install-to-dsh.sh` syncs `lib/`
-into every profile-local copy it finds and tells you when the anchor is the one
-being resolved; `pnpm install --force` inside the profile dir is the package-manager
-native equivalent (it also picks up `package.json`, and needs the registry
-reachable for the profile's other dependencies).
-
-You can confirm which file is loaded:
-
-```sh
-grep -c classifyRedirectWrapper ~/.dsh/profiles/web/node_modules/dsh-web-search-crw/lib/index.js
-```
-
-### Reload vs restart
-
-`patchReload: live` on the web profile re-applies `cordis.patch.yml` **config** in
-the running process. Nothing in cordis busts a plugin's module cache, so
-`lib/index.js` is imported once at startup:
+## Reload vs restart
 
 | Changed | Takes effect |
 |---|---|
-| `cordis.patch.yml` rows, or this plugin's config (`baseURL`, `limit`, `timeoutMs`, `resolveRedirects`, `resolveTimeoutMs`) | live, no restart |
-| `lib/index.js` (any code change) | after restarting `dsh web` |
-
+| Any config field (GUI Configure page, or `config:` of the `web-search-crw` / `web` rows in `cordis.patch.yml`) | live, no restart |
+| First install of the entry (new `insert:` row) | after restarting `dsh web` |
+| `lib/*.js` (any code change, including `lib/client.js`) | re-run `npm run install:dsh`, then restart `dsh web` |
 
 ## License
 
